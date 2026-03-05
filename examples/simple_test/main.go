@@ -46,7 +46,7 @@ func main() {
 		WebSocket: agentconnector.WebSocketConfig{
 			BaseURL:           *wsURL,
 			Token:             *wsToken,
-			SessionID:         "agent:ext-agent-x",
+			SessionID:         "agent-test",
 			HandshakeTimeout:  10 * time.Second,
 			PingInterval:      30 * time.Second,
 			ReconnectMaxRetry: 10,

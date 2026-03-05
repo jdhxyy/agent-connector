@@ -317,6 +317,12 @@ func (c *connector) messageLoop() {
 
 			log.Printf("[DEBUG] [messageLoop] 收到 WebSocket 消息, Type=%s, SessionID=%s", picoMsg.Type, picoMsg.SessionID)
 
+			// 过滤掉 pong 消息（心跳响应），不转发到 MQTT
+			if picoMsg.Type == protocol.TypePong {
+				log.Printf("[DEBUG] [messageLoop] 收到 pong 消息，不转发到 MQTT")
+				continue
+			}
+
 			if err := c.forwardWebSocketToMQTT(picoMsg); err != nil {
 				log.Printf("[ERROR] [messageLoop] 转发到 MQTT 失败: %v", err)
 				c.notifyError(err, ErrorContext{
