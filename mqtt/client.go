@@ -124,6 +124,12 @@ func (c *Client) Connect(ctx context.Context) error {
 		c.mu.Lock()
 		c.status = StatusConnected
 		c.mu.Unlock()
+
+		// 自动重新订阅之前的主题
+		if err := c.resubscribeAll(); err != nil {
+			log.Printf("[WARN] [Connect] Failed to resubscribe topics: %v", err)
+		}
+
 		if c.onConnect != nil {
 			c.onConnect(c.config.ClientID)
 		}
@@ -271,6 +277,33 @@ func (c *Client) SubscribeWithOptions(topic string, qos byte, noLocal bool, hand
 	log.Printf("[INFO] [Subscribe] Subscribe successful, Topic=%s (QoS=%d, NoLocal=%v), ClientID=%s",
 		topic, qos, noLocal, c.config.ClientID)
 
+	return nil
+}
+
+// resubscribeAll 重新订阅所有已订阅的主题（用于断线重连后）
+func (c *Client) resubscribeAll() error {
+	c.mu.RLock()
+	subscriptions := make(map[string]*Subscription)
+	for topic, sub := range c.subscriptions {
+		subscriptions[topic] = sub
+	}
+	c.mu.RUnlock()
+
+	if len(subscriptions) == 0 {
+		return nil
+	}
+
+	log.Printf("[INFO] [resubscribeAll] Resubscribing %d topics, ClientID=%s", len(subscriptions), c.config.ClientID)
+
+	for topic, sub := range subscriptions {
+		handler := c.handlers[topic]
+		if err := c.SubscribeWithOptions(topic, sub.QoS, sub.NoLocal, handler); err != nil {
+			log.Printf("[ERROR] [resubscribeAll] Failed to resubscribe to topic %s: %v", topic, err)
+			return fmt.Errorf("resubscribe to %s failed: %w", topic, err)
+		}
+	}
+
+	log.Printf("[INFO] [resubscribeAll] Resubscribed all topics successfully, ClientID=%s", c.config.ClientID)
 	return nil
 }
 

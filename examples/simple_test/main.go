@@ -102,7 +102,9 @@ func main() {
 
 	// 设置状态处理器
 	connector.OnStatusChange(func(oldStatus, newStatus agentconnector.ConnectionStatus) {
-		log.Printf("[Status] %s -> %s", oldStatus.String(), newStatus.String())
+		if oldStatus != newStatus {
+			log.Printf("[Status] %s -> %s", oldStatus.String(), newStatus.String())
+		}
 	})
 
 	// 启动 connector

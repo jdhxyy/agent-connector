@@ -404,21 +404,15 @@ func (c *connector) connectionMonitor() {
 				}
 			}
 
-			// 检查 MQTT 连接状态
+			// 检查 MQTT 连接状态（仅更新状态，不重连，因为 autopaho 会自动重连）
 			if !c.mqttClient.IsConnected() {
-				log.Printf("[WARN] [connectionMonitor] MQTT disconnected, attempting to reconnect...")
 				c.updateStatus(func(s *ConnectorStatus) {
 					s.MQTTStatus = StatusDisconnected
 				})
-
-				if err := c.reconnectMQTT(); err != nil {
-					log.Printf("[ERROR] [connectionMonitor] MQTT reconnection failed: %v", err)
-				} else {
-					log.Printf("[INFO] [connectionMonitor] MQTT reconnected successfully")
-					c.updateStatus(func(s *ConnectorStatus) {
-						s.MQTTStatus = StatusConnected
-					})
-				}
+			} else {
+				c.updateStatus(func(s *ConnectorStatus) {
+					s.MQTTStatus = StatusConnected
+				})
 			}
 		}
 	}
