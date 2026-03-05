@@ -28,7 +28,7 @@ type MQTTConfig struct {
 	ClientID             string        // 客户端 ID
 	Username             string        // 用户名（可选）
 	Password             string        // 密码（可选）
-	KeepAlive            time.Duration // 保活间隔（默认 60 秒）
+	KeepAlive            uint16        // 保活间隔（秒，默认 60）
 	ConnectTimeout       time.Duration // 连接超时（默认 10 秒）
 	CleanSession         bool          // 清理会话（默认 false）
 	AutoReconnect        bool          // 自动重连（默认 true）
@@ -53,7 +53,7 @@ func DefaultConfig() *Config {
 			ReconnectDelay:    3 * time.Second,
 		},
 		MQTT: MQTTConfig{
-			KeepAlive:            60 * time.Second,
+			KeepAlive:            60,
 			ConnectTimeout:       10 * time.Second,
 			CleanSession:         false,
 			AutoReconnect:        true,

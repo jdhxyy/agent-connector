@@ -80,8 +80,8 @@ func TestDefaultConfig(t *testing.T) {
 		t.Errorf("ReconnectMaxRetry = %v, want %v", config.WebSocket.ReconnectMaxRetry, 10)
 	}
 
-	if config.MQTT.KeepAlive != 60*time.Second {
-		t.Errorf("KeepAlive = %v, want %v", config.MQTT.KeepAlive, 60*time.Second)
+	if config.MQTT.KeepAlive != 60 {
+		t.Errorf("KeepAlive = %v, want %v", config.MQTT.KeepAlive, 60)
 	}
 
 	if config.Router.DefaultQoS != 1 {

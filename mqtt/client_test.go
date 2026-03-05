@@ -13,7 +13,7 @@ func TestNewClient(t *testing.T) {
 		ClientID:             "test-client",
 		Username:             "test-user",
 		Password:             "test-pass",
-		KeepAlive:            60 * time.Second,
+		KeepAlive:            60,
 		ConnectTimeout:       10 * time.Second,
 		CleanSession:         false,
 		AutoReconnect:        true,
@@ -176,7 +176,7 @@ func TestClientIntegration(t *testing.T) {
 	config := &Config{
 		BrokerURL:            "tcp://localhost:1883",
 		ClientID:             "integration-test-client",
-		KeepAlive:            30 * time.Second,
+		KeepAlive:            30,
 		ConnectTimeout:       5 * time.Second,
 		CleanSession:         true,
 		AutoReconnect:        true,

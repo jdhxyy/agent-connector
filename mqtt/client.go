@@ -4,26 +4,37 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
 	"sync"
 	"time"
 
-	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"github.com/eclipse/paho.golang/autopaho"
+	"github.com/eclipse/paho.golang/paho"
 )
 
 // MessageHandler MQTT 消息处理函数类型
 type MessageHandler func(topic string, data []byte)
 
+// Subscription 订阅配置
+type Subscription struct {
+	Topic   string
+	QoS     byte
+	NoLocal bool // 设置为 true 时，不会接收到自己发送的消息
+}
+
 // Client MQTT 客户端
 type Client struct {
 	config         *Config
-	client         mqtt.Client
+	manager        *autopaho.ConnectionManager
 	mu             sync.RWMutex
 	status         Status
 	handlers       map[string]MessageHandler
-	subscriptions  map[string]byte
+	subscriptions  map[string]*Subscription
 	connectionLost func(clientID string, err error)
 	reconnecting   func(clientID string)
 	onConnect      func(clientID string)
+	ctx            context.Context
+	cancel         context.CancelFunc
 }
 
 // Config MQTT 客户端配置
@@ -32,7 +43,7 @@ type Config struct {
 	ClientID             string
 	Username             string
 	Password             string
-	KeepAlive            time.Duration
+	KeepAlive            uint16
 	ConnectTimeout       time.Duration
 	CleanSession         bool
 	AutoReconnect        bool
@@ -53,11 +64,15 @@ func NewClient(config *Config) *Client {
 	log.Printf("[INFO] [NewClient] 正在创建 MQTT 客户端, ClientID=%s, Broker=%s",
 		config.ClientID, config.BrokerURL)
 
+	ctx, cancel := context.WithCancel(context.Background())
+
 	client := &Client{
 		config:        config,
 		status:        StatusDisconnected,
 		handlers:      make(map[string]MessageHandler),
-		subscriptions: make(map[string]byte),
+		subscriptions: make(map[string]*Subscription),
+		ctx:           ctx,
+		cancel:        cancel,
 	}
 
 	log.Printf("[INFO] [NewClient] MQTT 客户端创建成功, ClientID=%s", config.ClientID)
@@ -80,38 +95,33 @@ func (c *Client) Connect(ctx context.Context) error {
 
 	c.status = StatusConnecting
 
-	opts := mqtt.NewClientOptions()
-	opts.AddBroker(c.config.BrokerURL)
-	opts.SetClientID(c.config.ClientID)
-	opts.SetUsername(c.config.Username)
-	opts.SetPassword(c.config.Password)
-	opts.SetKeepAlive(c.config.KeepAlive)
-	opts.SetCleanSession(c.config.CleanSession)
-	opts.SetAutoReconnect(c.config.AutoReconnect)
-	opts.SetMaxReconnectInterval(c.config.MaxReconnectInterval)
-
-	log.Printf("[DEBUG] [Connect] MQTT 配置: KeepAlive=%v, CleanSession=%v, AutoReconnect=%v",
-		c.config.KeepAlive, c.config.CleanSession, c.config.AutoReconnect)
-
-	opts.SetConnectionLostHandler(func(client mqtt.Client, err error) {
-		log.Printf("[ERROR] [Connect] MQTT 连接丢失, ClientID=%s, Error=%v",
-			c.config.ClientID, err)
-		c.mu.Lock()
+	// 解析 Broker URL
+	serverURL, err := url.Parse(c.config.BrokerURL)
+	if err != nil {
 		c.status = StatusDisconnected
-		c.mu.Unlock()
-		if c.connectionLost != nil {
-			c.connectionLost(c.config.ClientID, err)
-		}
-	})
+		log.Printf("[ERROR] [Connect] 解析 Broker URL 失败: %v", err)
+		return fmt.Errorf("parse broker url: %w", err)
+	}
 
-	opts.SetReconnectingHandler(func(client mqtt.Client, opts *mqtt.ClientOptions) {
-		log.Printf("[INFO] [Connect] MQTT 正在重连, ClientID=%s", c.config.ClientID)
-		if c.reconnecting != nil {
-			c.reconnecting(c.config.ClientID)
-		}
-	})
+	// 创建 autopaho 配置
+	cfg := autopaho.ClientConfig{
+		ServerUrls:                    []*url.URL{serverURL},
+		ConnectUsername:               c.config.Username,
+		ConnectPassword:               []byte(c.config.Password),
+		CleanStartOnInitialConnection: c.config.CleanSession,
+		KeepAlive:                     c.config.KeepAlive,
+		ConnectTimeout:                c.config.ConnectTimeout,
+	}
 
-	opts.SetOnConnectHandler(func(client mqtt.Client) {
+	// 设置 ClientID 通过 ConnectPacketBuilder
+	clientID := c.config.ClientID
+	cfg.ConnectPacketBuilder = func(connect *paho.Connect, url *url.URL) (*paho.Connect, error) {
+		connect.ClientID = clientID
+		return connect, nil
+	}
+
+	// 设置连接成功回调
+	cfg.OnConnectionUp = func(cm *autopaho.ConnectionManager, connAck *paho.Connack) {
 		log.Printf("[INFO] [Connect] MQTT 连接成功, ClientID=%s", c.config.ClientID)
 		c.mu.Lock()
 		c.status = StatusConnected
@@ -119,29 +129,62 @@ func (c *Client) Connect(ctx context.Context) error {
 		if c.onConnect != nil {
 			c.onConnect(c.config.ClientID)
 		}
-		c.resubscribe()
-	})
-
-	c.client = mqtt.NewClient(opts)
-
-	log.Printf("[DEBUG] [Connect] 正在执行 MQTT 连接...")
-	token := c.client.Connect()
-
-	select {
-	case <-token.Done():
-		if token.Error() != nil {
-			c.status = StatusDisconnected
-			log.Printf("[ERROR] [Connect] MQTT 连接失败: %v", token.Error())
-			return fmt.Errorf("mqtt connection failed: %w", token.Error())
-		}
-	case <-ctx.Done():
-		c.status = StatusDisconnected
-		log.Printf("[ERROR] [Connect] MQTT 连接超时: %v", ctx.Err())
-		return fmt.Errorf("mqtt connection timeout: %w", ctx.Err())
 	}
 
-	c.status = StatusConnected
-	log.Printf("[INFO] [Connect] MQTT 连接成功, ClientID=%s", c.config.ClientID)
+	// 设置连接关闭回调
+	cfg.OnConnectError = func(err error) {
+		log.Printf("[ERROR] [Connect] MQTT 连接错误: %v", err)
+		c.mu.Lock()
+		c.status = StatusDisconnected
+		c.mu.Unlock()
+		if c.connectionLost != nil {
+			c.connectionLost(c.config.ClientID, err)
+		}
+	}
+
+	// 设置消息接收回调
+	cfg.OnPublishReceived = []func(paho.PublishReceived) (bool, error){
+		func(pr paho.PublishReceived) (bool, error) {
+			msg := pr.Packet
+			topic := msg.Topic
+			payload := msg.Payload
+
+			log.Printf("[DEBUG] [Connect] 收到 MQTT 消息, Topic=%s, QoS=%d, Payload=%s",
+				topic, msg.QoS, string(payload))
+
+			c.mu.RLock()
+			handler := c.handlers[topic]
+			c.mu.RUnlock()
+
+			if handler != nil {
+				handler(topic, payload)
+			}
+
+			return true, nil
+		},
+	}
+
+	// 创建连接管理器
+	manager, err := autopaho.NewConnection(c.ctx, cfg)
+	if err != nil {
+		c.status = StatusDisconnected
+		log.Printf("[ERROR] [Connect] 创建连接管理器失败: %v", err)
+		return fmt.Errorf("create connection manager: %w", err)
+	}
+
+	c.manager = manager
+
+	// 等待连接建立
+	connectCtx, cancel := context.WithTimeout(ctx, c.config.ConnectTimeout)
+	defer cancel()
+
+	if err := manager.AwaitConnection(connectCtx); err != nil {
+		c.status = StatusDisconnected
+		log.Printf("[ERROR] [Connect] 等待连接失败: %v", err)
+		return fmt.Errorf("await connection: %w", err)
+	}
+
+	log.Printf("[INFO] [Connect] MQTT 连接已建立, ClientID=%s", c.config.ClientID)
 
 	return nil
 }
@@ -159,7 +202,17 @@ func (c *Client) Disconnect(waitTime time.Duration) error {
 	log.Printf("[INFO] [Disconnect] 正在断开 MQTT 连接, ClientID=%s, WaitTime=%v",
 		c.config.ClientID, waitTime)
 
-	c.client.Disconnect(uint(waitTime.Milliseconds()))
+	// 取消上下文，停止连接管理器
+	c.cancel()
+
+	// 断开连接
+	ctx, cancel := context.WithTimeout(context.Background(), waitTime)
+	defer cancel()
+
+	if err := c.manager.Disconnect(ctx); err != nil {
+		log.Printf("[WARN] [Disconnect] 断开连接失败: %v", err)
+	}
+
 	c.status = StatusDisconnected
 
 	log.Printf("[INFO] [Disconnect] MQTT 连接已断开, ClientID=%s", c.config.ClientID)
@@ -167,8 +220,14 @@ func (c *Client) Disconnect(waitTime time.Duration) error {
 	return nil
 }
 
-// Subscribe 订阅 MQTT 主题
+// Subscribe 订阅 MQTT 主题（默认 NoLocal=true，不接收自己发送的消息）
 func (c *Client) Subscribe(topic string, qos byte, handler MessageHandler) error {
+	return c.SubscribeWithOptions(topic, qos, true, handler)
+}
+
+// SubscribeWithOptions 使用指定选项订阅 MQTT 主题
+// noLocal: 设置为 true 时，不会接收到自己发送的消息
+func (c *Client) SubscribeWithOptions(topic string, qos byte, noLocal bool, handler MessageHandler) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -177,29 +236,42 @@ func (c *Client) Subscribe(topic string, qos byte, handler MessageHandler) error
 		return fmt.Errorf("not connected")
 	}
 
-	log.Printf("[INFO] [Subscribe] 正在订阅主题: %s (QoS=%d), ClientID=%s",
-		topic, qos, c.config.ClientID)
+	log.Printf("[INFO] [Subscribe] 正在订阅主题: %s (QoS=%d, NoLocal=%v), ClientID=%s",
+		topic, qos, noLocal, c.config.ClientID)
 
-	token := c.client.Subscribe(topic, qos, func(client mqtt.Client, msg mqtt.Message) {
-		log.Printf("[DEBUG] [Subscribe] 收到 MQTT 消息, Topic=%s, QoS=%d, Payload=%s",
-			msg.Topic(), msg.Qos(), string(msg.Payload()))
+	// 使用 paho.golang 的 SubscribeOptions 设置 NoLocal
+	subscribePacket := &paho.Subscribe{
+		Subscriptions: []paho.SubscribeOptions{
+			{
+				Topic:             topic,
+				QoS:               qos,
+				NoLocal:           noLocal,
+				RetainAsPublished: false,
+				RetainHandling:    0,
+			},
+		},
+	}
 
-		if handler != nil {
-			handler(msg.Topic(), msg.Payload())
-		}
-	})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-	token.Wait()
-	if token.Error() != nil {
-		log.Printf("[ERROR] [Subscribe] 订阅失败, Topic=%s: %v", topic, token.Error())
-		return fmt.Errorf("subscribe failed: %w", token.Error())
+	suback, err := c.manager.Subscribe(ctx, subscribePacket)
+	if err != nil {
+		log.Printf("[ERROR] [Subscribe] 订阅失败, Topic=%s: %v", topic, err)
+		return fmt.Errorf("subscribe failed: %w", err)
+	}
+
+	// 检查订阅结果
+	if len(suback.Reasons) > 0 && suback.Reasons[0] >= 0x80 {
+		log.Printf("[ERROR] [Subscribe] 订阅被拒绝, Topic=%s, ReasonCode=%d", topic, suback.Reasons[0])
+		return fmt.Errorf("subscribe rejected, reason code: %d", suback.Reasons[0])
 	}
 
 	c.handlers[topic] = handler
-	c.subscriptions[topic] = qos
+	c.subscriptions[topic] = &Subscription{Topic: topic, QoS: qos, NoLocal: noLocal}
 
-	log.Printf("[INFO] [Subscribe] 订阅成功, Topic=%s (QoS=%d), ClientID=%s",
-		topic, qos, c.config.ClientID)
+	log.Printf("[INFO] [Subscribe] 订阅成功, Topic=%s (QoS=%d, NoLocal=%v), ClientID=%s",
+		topic, qos, noLocal, c.config.ClientID)
 
 	return nil
 }
@@ -234,11 +306,17 @@ func (c *Client) Unsubscribe(topics ...string) error {
 	log.Printf("[INFO] [Unsubscribe] 正在取消订阅 %d 个主题: %v, ClientID=%s",
 		len(topics), topics, c.config.ClientID)
 
-	token := c.client.Unsubscribe(topics...)
-	token.Wait()
-	if token.Error() != nil {
-		log.Printf("[ERROR] [Unsubscribe] 取消订阅失败: %v", token.Error())
-		return fmt.Errorf("unsubscribe failed: %w", token.Error())
+	unsubscribePacket := &paho.Unsubscribe{
+		Topics: topics,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, err := c.manager.Unsubscribe(ctx, unsubscribePacket)
+	if err != nil {
+		log.Printf("[ERROR] [Unsubscribe] 取消订阅失败: %v", err)
+		return fmt.Errorf("unsubscribe failed: %w", err)
 	}
 
 	for _, topic := range topics {
@@ -259,59 +337,41 @@ func (c *Client) Publish(topic string, qos byte, retained bool, payload interfac
 		log.Printf("[ERROR] [Publish] MQTT 未连接, 无法发布消息到主题: %s", topic)
 		return fmt.Errorf("not connected")
 	}
-	client := c.client
+	manager := c.manager
 	c.mu.RUnlock()
 
 	log.Printf("[DEBUG] [Publish] 正在发布消息, Topic=%s, QoS=%d, Retained=%v, Payload=%v",
 		topic, qos, retained, payload)
 
-	token := client.Publish(topic, qos, retained, payload)
-	token.Wait()
-	if token.Error() != nil {
-		log.Printf("[ERROR] [Publish] 发布失败, Topic=%s: %v", topic, token.Error())
-		return fmt.Errorf("publish failed: %w", token.Error())
+	var payloadBytes []byte
+	switch v := payload.(type) {
+	case []byte:
+		payloadBytes = v
+	case string:
+		payloadBytes = []byte(v)
+	default:
+		payloadBytes = []byte(fmt.Sprintf("%v", v))
+	}
+
+	publishPacket := &paho.Publish{
+		Topic:   topic,
+		QoS:     qos,
+		Retain:  retained,
+		Payload: payloadBytes,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, err := manager.Publish(ctx, publishPacket)
+	if err != nil {
+		log.Printf("[ERROR] [Publish] 发布失败, Topic=%s: %v", topic, err)
+		return fmt.Errorf("publish failed: %w", err)
 	}
 
 	log.Printf("[DEBUG] [Publish] 发布成功, Topic=%s", topic)
 
 	return nil
-}
-
-// resubscribe 重新订阅所有已订阅的主题
-func (c *Client) resubscribe() {
-	c.mu.RLock()
-	subscriptions := make(map[string]byte)
-	for topic, qos := range c.subscriptions {
-		subscriptions[topic] = qos
-	}
-	handlers := make(map[string]MessageHandler)
-	for topic, handler := range c.handlers {
-		handlers[topic] = handler
-	}
-	c.mu.RUnlock()
-
-	if len(subscriptions) == 0 {
-		return
-	}
-
-	log.Printf("[INFO] [resubscribe] 正在重新订阅 %d 个主题, ClientID=%s",
-		len(subscriptions), c.config.ClientID)
-
-	for topic, qos := range subscriptions {
-		log.Printf("[DEBUG] [resubscribe] 重新订阅主题: %s (QoS=%d)", topic, qos)
-		handler := handlers[topic]
-		token := c.client.Subscribe(topic, qos, func(client mqtt.Client, msg mqtt.Message) {
-			if handler != nil {
-				handler(msg.Topic(), msg.Payload())
-			}
-		})
-		token.Wait()
-		if token.Error() != nil {
-			log.Printf("[ERROR] [resubscribe] 重新订阅失败, Topic=%s: %v", topic, token.Error())
-		}
-	}
-
-	log.Printf("[INFO] [resubscribe] 重新订阅完成, ClientID=%s", c.config.ClientID)
 }
 
 // IsConnected 检查是否已连接
