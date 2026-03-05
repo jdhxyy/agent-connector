@@ -39,15 +39,13 @@ type Client struct {
 
 // Config MQTT 客户端配置
 type Config struct {
-	BrokerURL            string
-	ClientID             string
-	Username             string
-	Password             string
-	KeepAlive            uint16
-	ConnectTimeout       time.Duration
-	CleanSession         bool
-	AutoReconnect        bool
-	MaxReconnectInterval time.Duration
+	BrokerURL      string
+	ClientID       string
+	Username       string
+	Password       string
+	KeepAlive      uint16
+	ConnectTimeout time.Duration
+	CleanSession   bool
 }
 
 // Status 连接状态枚举

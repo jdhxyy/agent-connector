@@ -19,8 +19,8 @@ type connector struct {
 	mqttClient *mqtt.Client
 	converter  *protocol.Converter
 
-	status        ConnectorStatus
-	statusMu      sync.RWMutex
+	status   ConnectorStatus
+	statusMu sync.RWMutex
 
 	msgHandlers    []MessageHandler
 	errHandlers    []ErrorHandler
@@ -59,27 +59,24 @@ func NewConnector(config *Config) (Connector, error) {
 	}
 
 	wsConfig := &websocket.Config{
-		BaseURL:           config.WebSocket.BaseURL,
-		Token:             config.WebSocket.Token,
-		SessionID:         config.WebSocket.SessionID,
-		HandshakeTimeout:  config.WebSocket.HandshakeTimeout,
-		PingInterval:      config.WebSocket.PingInterval,
-		ReconnectMaxRetry: config.WebSocket.ReconnectMaxRetry,
-		ReconnectDelay:    config.WebSocket.ReconnectDelay,
+		BaseURL:          config.WebSocket.BaseURL,
+		Token:            config.WebSocket.Token,
+		SessionID:        config.WebSocket.SessionID,
+		HandshakeTimeout: config.WebSocket.HandshakeTimeout,
+		PingInterval:     config.WebSocket.PingInterval,
+		ConnectTimeout:   config.WebSocket.ConnectTimeout,
 	}
 	c.wsClient = websocket.NewClient(wsConfig)
 	log.Printf("[INFO] [NewConnector] WebSocket client created, URL=%s", config.WebSocket.BaseURL)
 
 	mqttConfig := &mqtt.Config{
-		BrokerURL:            config.MQTT.BrokerURL,
-		ClientID:             config.MQTT.ClientID,
-		Username:             config.MQTT.Username,
-		Password:             config.MQTT.Password,
-		KeepAlive:            config.MQTT.KeepAlive,
-		ConnectTimeout:       config.MQTT.ConnectTimeout,
-		CleanSession:         config.MQTT.CleanSession,
-		AutoReconnect:        config.MQTT.AutoReconnect,
-		MaxReconnectInterval: config.MQTT.MaxReconnectInterval,
+		BrokerURL:      config.MQTT.BrokerURL,
+		ClientID:       config.MQTT.ClientID,
+		Username:       config.MQTT.Username,
+		Password:       config.MQTT.Password,
+		KeepAlive:      config.MQTT.KeepAlive,
+		ConnectTimeout: config.MQTT.ConnectTimeout,
+		CleanSession:   config.MQTT.CleanSession,
 	}
 	c.mqttClient = mqtt.NewClient(mqttConfig)
 	log.Printf("[INFO] [NewConnector] MQTT client created, Broker=%s", config.MQTT.BrokerURL)
@@ -117,6 +114,10 @@ func (c *connector) Start(ctx context.Context) error {
 
 	c.wg.Add(1)
 	go c.messageLoop()
+
+	// 启动连接监控和自动重连
+	c.wg.Add(1)
+	go c.connectionMonitor()
 
 	log.Printf("[INFO] [Start] Connector started successfully")
 
@@ -367,6 +368,161 @@ func (c *connector) updateStatus(fn func(*ConnectorStatus)) {
 	for _, handler := range c.statusHandlers {
 		handler(oldStatus.WebSocketStatus, newStatus.WebSocketStatus)
 	}
+}
+
+// connectionMonitor 连接监控和自动重连
+func (c *connector) connectionMonitor() {
+	defer c.wg.Done()
+
+	log.Printf("[INFO] [connectionMonitor] Connection monitor started")
+
+	checkInterval := 5 * time.Second
+	ticker := time.NewTicker(checkInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.ctx.Done():
+			log.Printf("[INFO] [connectionMonitor] Received exit signal, monitor stopped")
+			return
+
+		case <-ticker.C:
+			// 检查 WebSocket 连接状态
+			if !c.wsClient.IsConnected() {
+				log.Printf("[WARN] [connectionMonitor] WebSocket disconnected, attempting to reconnect...")
+				c.updateStatus(func(s *ConnectorStatus) {
+					s.WebSocketStatus = StatusDisconnected
+				})
+
+				if err := c.reconnectWebSocket(); err != nil {
+					log.Printf("[ERROR] [connectionMonitor] WebSocket reconnection failed: %v", err)
+				} else {
+					log.Printf("[INFO] [connectionMonitor] WebSocket reconnected successfully")
+					c.updateStatus(func(s *ConnectorStatus) {
+						s.WebSocketStatus = StatusConnected
+					})
+				}
+			}
+
+			// 检查 MQTT 连接状态
+			if !c.mqttClient.IsConnected() {
+				log.Printf("[WARN] [connectionMonitor] MQTT disconnected, attempting to reconnect...")
+				c.updateStatus(func(s *ConnectorStatus) {
+					s.MQTTStatus = StatusDisconnected
+				})
+
+				if err := c.reconnectMQTT(); err != nil {
+					log.Printf("[ERROR] [connectionMonitor] MQTT reconnection failed: %v", err)
+				} else {
+					log.Printf("[INFO] [connectionMonitor] MQTT reconnected successfully")
+					c.updateStatus(func(s *ConnectorStatus) {
+						s.MQTTStatus = StatusConnected
+					})
+				}
+			}
+		}
+	}
+}
+
+// reconnectWebSocket 重新连接 WebSocket
+func (c *connector) reconnectWebSocket() error {
+	// 先清理旧连接
+	c.wsClient.Disconnect()
+
+	attempt := 1
+	for {
+		select {
+		case <-c.ctx.Done():
+			return fmt.Errorf("context cancelled")
+		default:
+		}
+
+		log.Printf("[INFO] [reconnectWebSocket] Reconnection attempt %d", attempt)
+
+		ctx, cancel := context.WithTimeout(c.ctx, c.config.WebSocket.ConnectTimeout)
+		err := c.wsClient.Connect(ctx)
+		cancel()
+
+		if err == nil {
+			return nil
+		}
+
+		log.Printf("[WARN] [reconnectWebSocket] Attempt %d failed: %v", attempt, err)
+		log.Printf("[INFO] [reconnectWebSocket] Waiting 5s before next attempt")
+
+		select {
+		case <-c.ctx.Done():
+			return fmt.Errorf("context cancelled")
+		case <-time.After(5 * time.Second):
+		}
+
+		attempt++
+	}
+}
+
+// reconnectMQTT 重新连接 MQTT
+func (c *connector) reconnectMQTT() error {
+	attempt := 1
+	for {
+		select {
+		case <-c.ctx.Done():
+			return fmt.Errorf("context cancelled")
+		default:
+		}
+
+		log.Printf("[INFO] [reconnectMQTT] Reconnection attempt %d", attempt)
+
+		ctx, cancel := context.WithTimeout(c.ctx, c.config.MQTT.ConnectTimeout)
+		err := c.mqttClient.Connect(ctx)
+		cancel()
+
+		if err == nil {
+			// 重新订阅之前的主题
+			if err := c.resubscribeTopics(); err != nil {
+				log.Printf("[WARN] [reconnectMQTT] Failed to resubscribe topics: %v", err)
+			}
+			return nil
+		}
+
+		log.Printf("[WARN] [reconnectMQTT] Attempt %d failed: %v", attempt, err)
+		log.Printf("[INFO] [reconnectMQTT] Waiting 5s before next attempt")
+
+		select {
+		case <-c.ctx.Done():
+			return fmt.Errorf("context cancelled")
+		case <-time.After(5 * time.Second):
+		}
+
+		attempt++
+	}
+}
+
+// resubscribeTopics 重新订阅所有主题
+func (c *connector) resubscribeTopics() error {
+	c.subscribedMu.RLock()
+	agents := make([]string, 0, len(c.subscribedAgents))
+	for agentID := range c.subscribedAgents {
+		agents = append(agents, agentID)
+	}
+	groups := make([]string, 0, len(c.subscribedGroups))
+	for groupID := range c.subscribedGroups {
+		groups = append(groups, groupID)
+	}
+	c.subscribedMu.RUnlock()
+
+	if len(agents) > 0 {
+		if err := c.SubscribeExternalAgents(agents); err != nil {
+			return fmt.Errorf("resubscribe agents: %w", err)
+		}
+	}
+
+	if len(groups) > 0 {
+		if err := c.SubscribeExternalGroups(groups); err != nil {
+			return fmt.Errorf("resubscribe groups: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // notifyError 通知所有错误处理函数

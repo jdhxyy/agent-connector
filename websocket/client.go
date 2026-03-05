@@ -28,13 +28,12 @@ type Client struct {
 
 // Config WebSocket 客户端配置
 type Config struct {
-	BaseURL           string
-	Token             string
-	SessionID         string
-	HandshakeTimeout  time.Duration
-	PingInterval      time.Duration
-	ReconnectMaxRetry int
-	ReconnectDelay    time.Duration
+	BaseURL          string
+	Token            string
+	SessionID        string
+	HandshakeTimeout time.Duration
+	PingInterval     time.Duration
+	ConnectTimeout   time.Duration
 }
 
 // Status 连接状态枚举
@@ -74,6 +73,13 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 
 	c.status = StatusConnecting
+
+	// 重新创建 stopChan（如果之前被关闭过）
+	select {
+	case <-c.stopChan:
+		c.stopChan = make(chan struct{})
+	default:
+	}
 
 	wsURL := fmt.Sprintf("%s/pico/ws?session_id=%s", c.config.BaseURL, c.sessionID)
 	u, err := url.Parse(wsURL)
@@ -150,6 +156,10 @@ func (c *Client) SendPicoMessage(msg protocol.PicoMessage) error {
 	}
 
 	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+		// 发送失败，标记为断开状态
+		c.mu.Lock()
+		c.status = StatusDisconnected
+		c.mu.Unlock()
 		return fmt.Errorf("write message: %w", err)
 	}
 
@@ -187,6 +197,11 @@ func (c *Client) readLoop() {
 
 		_, data, err := c.conn.ReadMessage()
 		if err != nil {
+			// 更新状态为断开
+			c.mu.Lock()
+			c.status = StatusDisconnected
+			c.mu.Unlock()
+
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				select {
 				case c.errChan <- fmt.Errorf("connection closed unexpectedly: %w", err):
