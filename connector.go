@@ -38,11 +38,11 @@ type connector struct {
 // NewConnector 创建并初始化一个新的 Connector 实例
 func NewConnector(config *Config) (Connector, error) {
 	if config == nil {
-		log.Printf("[ERROR] [NewConnector] 配置不能为空")
+		log.Printf("[ERROR] [NewConnector] Config cannot be nil")
 		return nil, ErrInvalidConfig
 	}
 
-	log.Printf("[INFO] [NewConnector] 正在创建 Connector")
+	log.Printf("[INFO] [NewConnector] Creating Connector")
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -68,7 +68,7 @@ func NewConnector(config *Config) (Connector, error) {
 		ReconnectDelay:    config.WebSocket.ReconnectDelay,
 	}
 	c.wsClient = websocket.NewClient(wsConfig)
-	log.Printf("[INFO] [NewConnector] WebSocket 客户端已创建, URL=%s", config.WebSocket.BaseURL)
+	log.Printf("[INFO] [NewConnector] WebSocket client created, URL=%s", config.WebSocket.BaseURL)
 
 	mqttConfig := &mqtt.Config{
 		BrokerURL:            config.MQTT.BrokerURL,
@@ -82,31 +82,31 @@ func NewConnector(config *Config) (Connector, error) {
 		MaxReconnectInterval: config.MQTT.MaxReconnectInterval,
 	}
 	c.mqttClient = mqtt.NewClient(mqttConfig)
-	log.Printf("[INFO] [NewConnector] MQTT 客户端已创建, Broker=%s", config.MQTT.BrokerURL)
+	log.Printf("[INFO] [NewConnector] MQTT client created, Broker=%s", config.MQTT.BrokerURL)
 
-	log.Printf("[INFO] [NewConnector] Connector 创建成功")
+	log.Printf("[INFO] [NewConnector] Connector created successfully")
 
 	return c, nil
 }
 
 // Start 启动连接器，建立 WebSocket 和 MQTT 连接
 func (c *connector) Start(ctx context.Context) error {
-	log.Printf("[INFO] [Start] 正在启动 Connector")
+	log.Printf("[INFO] [Start] Starting Connector")
 
-	log.Printf("[INFO] [Start] 正在连接 WebSocket, URL=%s", c.config.WebSocket.BaseURL)
+	log.Printf("[INFO] [Start] Connecting WebSocket, URL=%s", c.config.WebSocket.BaseURL)
 	if err := c.wsClient.Connect(ctx); err != nil {
-		log.Printf("[ERROR] [Start] WebSocket 连接失败: %v", err)
+		log.Printf("[ERROR] [Start] WebSocket connection failed: %v", err)
 		return fmt.Errorf("websocket connect: %w", err)
 	}
-	log.Printf("[INFO] [Start] WebSocket 连接成功")
+	log.Printf("[INFO] [Start] WebSocket connected")
 
-	log.Printf("[INFO] [Start] 正在连接 MQTT, Broker=%s", c.config.MQTT.BrokerURL)
+	log.Printf("[INFO] [Start] Connecting MQTT, Broker=%s", c.config.MQTT.BrokerURL)
 	if err := c.mqttClient.Connect(ctx); err != nil {
-		log.Printf("[ERROR] [Start] MQTT 连接失败: %v", err)
+		log.Printf("[ERROR] [Start] MQTT connection failed: %v", err)
 		c.wsClient.Disconnect()
 		return fmt.Errorf("mqtt connect: %w", err)
 	}
-	log.Printf("[INFO] [Start] MQTT 连接成功")
+	log.Printf("[INFO] [Start] MQTT connected")
 
 	c.updateStatus(func(s *ConnectorStatus) {
 		s.WebSocketStatus = StatusConnected
@@ -118,29 +118,29 @@ func (c *connector) Start(ctx context.Context) error {
 	c.wg.Add(1)
 	go c.messageLoop()
 
-	log.Printf("[INFO] [Start] Connector 启动成功")
+	log.Printf("[INFO] [Start] Connector started successfully")
 
 	return nil
 }
 
 // Stop 停止连接器，断开所有连接
 func (c *connector) Stop() error {
-	log.Printf("[INFO] [Stop] 正在停止 Connector")
+	log.Printf("[INFO] [Stop] Stopping Connector")
 
 	c.cancel()
-	log.Printf("[DEBUG] [Stop] 上下文已取消")
+	log.Printf("[DEBUG] [Stop] Context cancelled")
 
-	log.Printf("[INFO] [Stop] 正在断开 WebSocket")
+	log.Printf("[INFO] [Stop] Disconnecting WebSocket")
 	c.wsClient.Disconnect()
-	log.Printf("[INFO] [Stop] WebSocket 已断开")
+	log.Printf("[INFO] [Stop] WebSocket disconnected")
 
-	log.Printf("[INFO] [Stop] 正在断开 MQTT")
+	log.Printf("[INFO] [Stop] Disconnecting MQTT")
 	c.mqttClient.Disconnect(5 * time.Second)
-	log.Printf("[INFO] [Stop] MQTT 已断开")
+	log.Printf("[INFO] [Stop] MQTT disconnected")
 
-	log.Printf("[DEBUG] [Stop] 等待所有 goroutine 退出")
+	log.Printf("[DEBUG] [Stop] Waiting for all goroutines to exit")
 	c.wg.Wait()
-	log.Printf("[DEBUG] [Stop] 所有 goroutine 已退出")
+	log.Printf("[DEBUG] [Stop] All goroutines exited")
 
 	c.updateStatus(func(s *ConnectorStatus) {
 		s.WebSocketStatus = StatusDisconnected
@@ -148,7 +148,7 @@ func (c *connector) Stop() error {
 		s.IsRunning = false
 	})
 
-	log.Printf("[INFO] [Stop] Connector 已停止")
+	log.Printf("[INFO] [Stop] Connector stopped")
 
 	return nil
 }
@@ -162,7 +162,7 @@ func (c *connector) Status() ConnectorStatus {
 
 // SubscribeExternalAgents 订阅外部 Agent 消息
 func (c *connector) SubscribeExternalAgents(agentIDs []string) error {
-	log.Printf("[INFO] [SubscribeExternalAgents] 订阅外部 Agents: %v", agentIDs)
+	log.Printf("[INFO] [SubscribeExternalAgents] Subscribing external Agents: %v", agentIDs)
 
 	for _, agentID := range agentIDs {
 		topic := protocol.BuildAgentTopic(agentID)
@@ -174,7 +174,7 @@ func (c *connector) SubscribeExternalAgents(agentIDs []string) error {
 		c.subscribedAgents[agentID] = true
 		c.subscribedMu.Unlock()
 
-		log.Printf("[INFO] [SubscribeExternalAgents] 已订阅外部 Agent: %s (topic: %s)", agentID, topic)
+		log.Printf("[INFO] [SubscribeExternalAgents] Subscribed external Agent: %s (topic: %s)", agentID, topic)
 	}
 
 	return nil
@@ -182,7 +182,7 @@ func (c *connector) SubscribeExternalAgents(agentIDs []string) error {
 
 // SubscribeExternalGroups 订阅外部群组消息
 func (c *connector) SubscribeExternalGroups(groupIDs []string) error {
-	log.Printf("[INFO] [SubscribeExternalGroups] 订阅外部群组: %v", groupIDs)
+	log.Printf("[INFO] [SubscribeExternalGroups] Subscribing external groups: %v", groupIDs)
 
 	for _, groupID := range groupIDs {
 		topic := protocol.BuildGroupTopic(groupID)
@@ -194,7 +194,7 @@ func (c *connector) SubscribeExternalGroups(groupIDs []string) error {
 		c.subscribedGroups[groupID] = true
 		c.subscribedMu.Unlock()
 
-		log.Printf("[INFO] [SubscribeExternalGroups] 已订阅外部群组: %s (topic: %s)", groupID, topic)
+		log.Printf("[INFO] [SubscribeExternalGroups] Subscribed external group: %s (topic: %s)", groupID, topic)
 	}
 
 	return nil
@@ -202,7 +202,7 @@ func (c *connector) SubscribeExternalGroups(groupIDs []string) error {
 
 // UnsubscribeExternalAgents 取消订阅外部 Agent
 func (c *connector) UnsubscribeExternalAgents(agentIDs []string) error {
-	log.Printf("[INFO] [UnsubscribeExternalAgents] 取消订阅外部 Agents: %v", agentIDs)
+	log.Printf("[INFO] [UnsubscribeExternalAgents] Unsubscribing external Agents: %v", agentIDs)
 
 	for _, agentID := range agentIDs {
 		topic := protocol.BuildAgentTopic(agentID)
@@ -214,7 +214,7 @@ func (c *connector) UnsubscribeExternalAgents(agentIDs []string) error {
 		delete(c.subscribedAgents, agentID)
 		c.subscribedMu.Unlock()
 
-		log.Printf("[INFO] [UnsubscribeExternalAgents] 已取消订阅外部 Agent: %s", agentID)
+		log.Printf("[INFO] [UnsubscribeExternalAgents] Unsubscribed external Agent: %s", agentID)
 	}
 
 	return nil
@@ -222,7 +222,7 @@ func (c *connector) UnsubscribeExternalAgents(agentIDs []string) error {
 
 // UnsubscribeExternalGroups 取消订阅外部群组
 func (c *connector) UnsubscribeExternalGroups(groupIDs []string) error {
-	log.Printf("[INFO] [UnsubscribeExternalGroups] 取消订阅外部群组: %v", groupIDs)
+	log.Printf("[INFO] [UnsubscribeExternalGroups] Unsubscribing external groups: %v", groupIDs)
 
 	for _, groupID := range groupIDs {
 		topic := protocol.BuildGroupTopic(groupID)
@@ -234,7 +234,7 @@ func (c *connector) UnsubscribeExternalGroups(groupIDs []string) error {
 		delete(c.subscribedGroups, groupID)
 		c.subscribedMu.Unlock()
 
-		log.Printf("[INFO] [UnsubscribeExternalGroups] 已取消订阅外部群组: %s", groupID)
+		log.Printf("[INFO] [UnsubscribeExternalGroups] Unsubscribed external group: %s", groupID)
 	}
 
 	return nil
@@ -243,28 +243,28 @@ func (c *connector) UnsubscribeExternalGroups(groupIDs []string) error {
 // OnMessage 注册消息处理函数
 func (c *connector) OnMessage(handler MessageHandler) {
 	c.msgHandlers = append(c.msgHandlers, handler)
-	log.Printf("[DEBUG] [OnMessage] 消息处理器已注册, 当前处理器数量: %d", len(c.msgHandlers))
+	log.Printf("[DEBUG] [OnMessage] Message handler registered, current count: %d", len(c.msgHandlers))
 }
 
 // OnError 注册错误处理函数
 func (c *connector) OnError(handler ErrorHandler) {
 	c.errHandlers = append(c.errHandlers, handler)
-	log.Printf("[DEBUG] [OnError] 错误处理器已注册, 当前处理器数量: %d", len(c.errHandlers))
+	log.Printf("[DEBUG] [OnError] Error handler registered, current count: %d", len(c.errHandlers))
 }
 
 // OnStatusChange 注册状态变更处理函数
 func (c *connector) OnStatusChange(handler StatusHandler) {
 	c.statusHandlers = append(c.statusHandlers, handler)
-	log.Printf("[DEBUG] [OnStatusChange] 状态变更处理器已注册, 当前处理器数量: %d", len(c.statusHandlers))
+	log.Printf("[DEBUG] [OnStatusChange] Status handler registered, current count: %d", len(c.statusHandlers))
 }
 
 // mqttMessageHandler 统一的 MQTT 消息处理函数
 func (c *connector) mqttMessageHandler(topic string, data []byte) {
-	log.Printf("[DEBUG] [mqttMessageHandler] 收到 MQTT 消息, Topic=%s, Content=%s", topic, string(data))
+	log.Printf("[DEBUG] [mqttMessageHandler] Received MQTT message, Topic=%s, Content=%s", topic, string(data))
 
 	picoMsg, err := c.converter.MQTTToPico(topic, data)
 	if err != nil {
-		log.Printf("[ERROR] [mqttMessageHandler] MQTT 消息转换失败: %v", err)
+		log.Printf("[ERROR] [mqttMessageHandler] Failed to convert MQTT message: %v", err)
 		c.notifyError(err, ErrorContext{
 			Source:    "mqtt",
 			Operation: "convert",
@@ -273,7 +273,7 @@ func (c *connector) mqttMessageHandler(topic string, data []byte) {
 	}
 
 	if err := c.wsClient.SendPicoMessage(picoMsg); err != nil {
-		log.Printf("[ERROR] [mqttMessageHandler] 转发到 WebSocket 失败: %v", err)
+		log.Printf("[ERROR] [mqttMessageHandler] Failed to forward to WebSocket: %v", err)
 		c.notifyError(err, ErrorContext{
 			Source:    "websocket",
 			Operation: "send",
@@ -281,14 +281,14 @@ func (c *connector) mqttMessageHandler(topic string, data []byte) {
 		return
 	}
 
-	log.Printf("[DEBUG] [mqttMessageHandler] MQTT 消息已转发到 WebSocket, SessionID=%s", picoMsg.SessionID)
+	log.Printf("[DEBUG] [mqttMessageHandler] MQTT message forwarded to WebSocket, SessionID=%s", picoMsg.SessionID)
 }
 
 // messageLoop 消息处理循环
 func (c *connector) messageLoop() {
 	defer c.wg.Done()
 
-	log.Printf("[INFO] [messageLoop] 消息循环已启动")
+	log.Printf("[INFO] [messageLoop] Message loop started")
 
 	ticker := time.NewTicker(c.config.WebSocket.PingInterval)
 	defer ticker.Stop()
@@ -296,13 +296,13 @@ func (c *connector) messageLoop() {
 	for {
 		select {
 		case <-c.ctx.Done():
-			log.Printf("[INFO] [messageLoop] 收到退出信号，消息循环结束")
+			log.Printf("[INFO] [messageLoop] Received exit signal, message loop ended")
 			return
 
 		case <-ticker.C:
-			log.Printf("[DEBUG] [messageLoop] 发送 WebSocket ping")
+			log.Printf("[DEBUG] [messageLoop] Sending WebSocket ping")
 			if err := c.wsClient.SendPing(); err != nil {
-				log.Printf("[ERROR] [messageLoop] Ping 失败: %v", err)
+				log.Printf("[ERROR] [messageLoop] Ping failed: %v", err)
 				c.notifyError(err, ErrorContext{
 					Source:    "websocket",
 					Operation: "ping",
@@ -315,16 +315,16 @@ func (c *connector) messageLoop() {
 				continue
 			}
 
-			log.Printf("[DEBUG] [messageLoop] 收到 WebSocket 消息, Type=%s, SessionID=%s", picoMsg.Type, picoMsg.SessionID)
+			log.Printf("[DEBUG] [messageLoop] Received WebSocket message, Type=%s, SessionID=%s", picoMsg.Type, picoMsg.SessionID)
 
 			// 只转发 message.send 类型的消息到 MQTT，过滤其他所有类型
 			if picoMsg.Type != protocol.TypeMessageSend && picoMsg.Type != protocol.TypeMessageCreate {
-				log.Printf("[DEBUG] [messageLoop] 收到非 message.send 消息(Type=%s)，不转发到 MQTT", picoMsg.Type)
+				log.Printf("[DEBUG] [messageLoop] Received non-message.send message (Type=%s), not forwarding to MQTT", picoMsg.Type)
 				continue
 			}
 
 			if err := c.forwardWebSocketToMQTT(picoMsg); err != nil {
-				log.Printf("[ERROR] [messageLoop] 转发到 MQTT 失败: %v", err)
+				log.Printf("[ERROR] [messageLoop] Failed to forward to MQTT: %v", err)
 				c.notifyError(err, ErrorContext{
 					Source:    "mqtt",
 					Operation: "publish",
@@ -341,13 +341,13 @@ func (c *connector) forwardWebSocketToMQTT(picoMsg protocol.PicoMessage) error {
 		return fmt.Errorf("convert pico to mqtt: %w", err)
 	}
 
-	log.Printf("[DEBUG] [forwardWebSocketToMQTT] 转发到 MQTT, Topic=%s, Content=%s", topic, string(payload))
+	log.Printf("[DEBUG] [forwardWebSocketToMQTT] Forwarding to MQTT, Topic=%s, Content=%s", topic, string(payload))
 
 	if err := c.mqttClient.Publish(topic, c.config.Router.DefaultQoS, false, payload); err != nil {
 		return fmt.Errorf("publish to mqtt: %w", err)
 	}
 
-	log.Printf("[DEBUG] [forwardWebSocketToMQTT] 转发成功, Topic=%s", topic)
+	log.Printf("[DEBUG] [forwardWebSocketToMQTT] Forwarded successfully, Topic=%s", topic)
 	return nil
 }
 
@@ -359,7 +359,7 @@ func (c *connector) updateStatus(fn func(*ConnectorStatus)) {
 	newStatus := c.status
 	c.statusMu.Unlock()
 
-	log.Printf("[DEBUG] [updateStatus] 状态变更: WS=%s->%s, MQTT=%s->%s, Running=%v->%v",
+	log.Printf("[DEBUG] [updateStatus] Status changed: WS=%s->%s, MQTT=%s->%s, Running=%v->%v",
 		oldStatus.WebSocketStatus, newStatus.WebSocketStatus,
 		oldStatus.MQTTStatus, newStatus.MQTTStatus,
 		oldStatus.IsRunning, newStatus.IsRunning)
@@ -372,7 +372,7 @@ func (c *connector) updateStatus(fn func(*ConnectorStatus)) {
 // notifyError 通知所有错误处理函数
 func (c *connector) notifyError(err error, ctx ErrorContext) {
 	ctx.Timestamp = time.Now().Unix()
-	log.Printf("[ERROR] [notifyError] 发生错误: Source=%s, Operation=%s, Error=%v", ctx.Source, ctx.Operation, err)
+	log.Printf("[ERROR] [notifyError] Error occurred: Source=%s, Operation=%s, Error=%v", ctx.Source, ctx.Operation, err)
 
 	for _, handler := range c.errHandlers {
 		handler(err, ctx)

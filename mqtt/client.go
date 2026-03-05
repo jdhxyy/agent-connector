@@ -61,7 +61,7 @@ const (
 
 // NewClient 创建新的 MQTT 客户端
 func NewClient(config *Config) *Client {
-	log.Printf("[INFO] [NewClient] 正在创建 MQTT 客户端, ClientID=%s, Broker=%s",
+	log.Printf("[INFO] [NewClient] Creating MQTT client, ClientID=%s, Broker=%s",
 		config.ClientID, config.BrokerURL)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -75,7 +75,7 @@ func NewClient(config *Config) *Client {
 		cancel:        cancel,
 	}
 
-	log.Printf("[INFO] [NewClient] MQTT 客户端创建成功, ClientID=%s", config.ClientID)
+	log.Printf("[INFO] [NewClient] MQTT client created successfully, ClientID=%s", config.ClientID)
 
 	return client
 }
@@ -86,11 +86,11 @@ func (c *Client) Connect(ctx context.Context) error {
 	defer c.mu.Unlock()
 
 	if c.status == StatusConnected {
-		log.Printf("[WARN] [Connect] MQTT 客户端已连接, ClientID=%s", c.config.ClientID)
+		log.Printf("[WARN] [Connect] MQTT client already connected, ClientID=%s", c.config.ClientID)
 		return fmt.Errorf("already connected")
 	}
 
-	log.Printf("[INFO] [Connect] 正在连接 MQTT Broker, ClientID=%s, Broker=%s",
+	log.Printf("[INFO] [Connect] Connecting to MQTT Broker, ClientID=%s, Broker=%s",
 		c.config.ClientID, c.config.BrokerURL)
 
 	c.status = StatusConnecting
@@ -99,7 +99,7 @@ func (c *Client) Connect(ctx context.Context) error {
 	serverURL, err := url.Parse(c.config.BrokerURL)
 	if err != nil {
 		c.status = StatusDisconnected
-		log.Printf("[ERROR] [Connect] 解析 Broker URL 失败: %v", err)
+		log.Printf("[ERROR] [Connect] Failed to parse Broker URL: %v", err)
 		return fmt.Errorf("parse broker url: %w", err)
 	}
 
@@ -122,7 +122,7 @@ func (c *Client) Connect(ctx context.Context) error {
 
 	// 设置连接成功回调
 	cfg.OnConnectionUp = func(cm *autopaho.ConnectionManager, connAck *paho.Connack) {
-		log.Printf("[INFO] [Connect] MQTT 连接成功, ClientID=%s", c.config.ClientID)
+		log.Printf("[INFO] [Connect] MQTT connected successfully, ClientID=%s", c.config.ClientID)
 		c.mu.Lock()
 		c.status = StatusConnected
 		c.mu.Unlock()
@@ -133,7 +133,7 @@ func (c *Client) Connect(ctx context.Context) error {
 
 	// 设置连接关闭回调
 	cfg.OnConnectError = func(err error) {
-		log.Printf("[ERROR] [Connect] MQTT 连接错误: %v", err)
+		log.Printf("[ERROR] [Connect] MQTT connection error: %v", err)
 		c.mu.Lock()
 		c.status = StatusDisconnected
 		c.mu.Unlock()
@@ -149,7 +149,7 @@ func (c *Client) Connect(ctx context.Context) error {
 			topic := msg.Topic
 			payload := msg.Payload
 
-			log.Printf("[DEBUG] [Connect] 收到 MQTT 消息, Topic=%s, QoS=%d, Payload=%s",
+			log.Printf("[DEBUG] [Connect] Received MQTT message, Topic=%s, QoS=%d, Payload=%s",
 				topic, msg.QoS, string(payload))
 
 			c.mu.RLock()
@@ -168,7 +168,7 @@ func (c *Client) Connect(ctx context.Context) error {
 	manager, err := autopaho.NewConnection(c.ctx, cfg)
 	if err != nil {
 		c.status = StatusDisconnected
-		log.Printf("[ERROR] [Connect] 创建连接管理器失败: %v", err)
+		log.Printf("[ERROR] [Connect] Failed to create connection manager: %v", err)
 		return fmt.Errorf("create connection manager: %w", err)
 	}
 
@@ -180,11 +180,11 @@ func (c *Client) Connect(ctx context.Context) error {
 
 	if err := manager.AwaitConnection(connectCtx); err != nil {
 		c.status = StatusDisconnected
-		log.Printf("[ERROR] [Connect] 等待连接失败: %v", err)
+		log.Printf("[ERROR] [Connect] Failed to await connection: %v", err)
 		return fmt.Errorf("await connection: %w", err)
 	}
 
-	log.Printf("[INFO] [Connect] MQTT 连接已建立, ClientID=%s", c.config.ClientID)
+	log.Printf("[INFO] [Connect] MQTT connection established, ClientID=%s", c.config.ClientID)
 
 	return nil
 }
@@ -195,11 +195,11 @@ func (c *Client) Disconnect(waitTime time.Duration) error {
 	defer c.mu.Unlock()
 
 	if c.status == StatusDisconnected {
-		log.Printf("[DEBUG] [Disconnect] MQTT 客户端已断开, ClientID=%s", c.config.ClientID)
+		log.Printf("[DEBUG] [Disconnect] MQTT client already disconnected, ClientID=%s", c.config.ClientID)
 		return nil
 	}
 
-	log.Printf("[INFO] [Disconnect] 正在断开 MQTT 连接, ClientID=%s, WaitTime=%v",
+	log.Printf("[INFO] [Disconnect] Disconnecting MQTT, ClientID=%s, WaitTime=%v",
 		c.config.ClientID, waitTime)
 
 	// 取消上下文，停止连接管理器
@@ -210,12 +210,12 @@ func (c *Client) Disconnect(waitTime time.Duration) error {
 	defer cancel()
 
 	if err := c.manager.Disconnect(ctx); err != nil {
-		log.Printf("[WARN] [Disconnect] 断开连接失败: %v", err)
+		log.Printf("[WARN] [Disconnect] Failed to disconnect: %v", err)
 	}
 
 	c.status = StatusDisconnected
 
-	log.Printf("[INFO] [Disconnect] MQTT 连接已断开, ClientID=%s", c.config.ClientID)
+	log.Printf("[INFO] [Disconnect] MQTT disconnected, ClientID=%s", c.config.ClientID)
 
 	return nil
 }
@@ -232,11 +232,11 @@ func (c *Client) SubscribeWithOptions(topic string, qos byte, noLocal bool, hand
 	defer c.mu.Unlock()
 
 	if c.status != StatusConnected {
-		log.Printf("[ERROR] [Subscribe] MQTT 未连接, 无法订阅主题: %s", topic)
+		log.Printf("[ERROR] [Subscribe] MQTT not connected, cannot subscribe to topic: %s", topic)
 		return fmt.Errorf("not connected")
 	}
 
-	log.Printf("[INFO] [Subscribe] 正在订阅主题: %s (QoS=%d, NoLocal=%v), ClientID=%s",
+	log.Printf("[INFO] [Subscribe] Subscribing to topic: %s (QoS=%d, NoLocal=%v), ClientID=%s",
 		topic, qos, noLocal, c.config.ClientID)
 
 	// 使用 paho.golang 的 SubscribeOptions 设置 NoLocal
@@ -257,20 +257,20 @@ func (c *Client) SubscribeWithOptions(topic string, qos byte, noLocal bool, hand
 
 	suback, err := c.manager.Subscribe(ctx, subscribePacket)
 	if err != nil {
-		log.Printf("[ERROR] [Subscribe] 订阅失败, Topic=%s: %v", topic, err)
+		log.Printf("[ERROR] [Subscribe] Subscribe failed, Topic=%s: %v", topic, err)
 		return fmt.Errorf("subscribe failed: %w", err)
 	}
 
 	// 检查订阅结果
 	if len(suback.Reasons) > 0 && suback.Reasons[0] >= 0x80 {
-		log.Printf("[ERROR] [Subscribe] 订阅被拒绝, Topic=%s, ReasonCode=%d", topic, suback.Reasons[0])
+		log.Printf("[ERROR] [Subscribe] Subscribe rejected, Topic=%s, ReasonCode=%d", topic, suback.Reasons[0])
 		return fmt.Errorf("subscribe rejected, reason code: %d", suback.Reasons[0])
 	}
 
 	c.handlers[topic] = handler
 	c.subscriptions[topic] = &Subscription{Topic: topic, QoS: qos, NoLocal: noLocal}
 
-	log.Printf("[INFO] [Subscribe] 订阅成功, Topic=%s (QoS=%d, NoLocal=%v), ClientID=%s",
+	log.Printf("[INFO] [Subscribe] Subscribe successful, Topic=%s (QoS=%d, NoLocal=%v), ClientID=%s",
 		topic, qos, noLocal, c.config.ClientID)
 
 	return nil
@@ -278,17 +278,17 @@ func (c *Client) SubscribeWithOptions(topic string, qos byte, noLocal bool, hand
 
 // SubscribeMultiple 批量订阅多个主题
 func (c *Client) SubscribeMultiple(topics map[string]byte, handler MessageHandler) error {
-	log.Printf("[INFO] [SubscribeMultiple] 批量订阅 %d 个主题, ClientID=%s",
+	log.Printf("[INFO] [SubscribeMultiple] Batch subscribing %d topics, ClientID=%s",
 		len(topics), c.config.ClientID)
 
 	for topic, qos := range topics {
 		if err := c.Subscribe(topic, qos, handler); err != nil {
-			log.Printf("[ERROR] [SubscribeMultiple] 订阅主题 %s 失败: %v", topic, err)
+			log.Printf("[ERROR] [SubscribeMultiple] Failed to subscribe to topic %s: %v", topic, err)
 			return fmt.Errorf("subscribe to %s failed: %w", topic, err)
 		}
 	}
 
-	log.Printf("[INFO] [SubscribeMultiple] 批量订阅完成, ClientID=%s", c.config.ClientID)
+	log.Printf("[INFO] [SubscribeMultiple] Batch subscribe completed, ClientID=%s", c.config.ClientID)
 
 	return nil
 }
@@ -299,11 +299,11 @@ func (c *Client) Unsubscribe(topics ...string) error {
 	defer c.mu.Unlock()
 
 	if c.status != StatusConnected {
-		log.Printf("[ERROR] [Unsubscribe] MQTT 未连接, 无法取消订阅")
+		log.Printf("[ERROR] [Unsubscribe] MQTT not connected, cannot unsubscribe")
 		return fmt.Errorf("not connected")
 	}
 
-	log.Printf("[INFO] [Unsubscribe] 正在取消订阅 %d 个主题: %v, ClientID=%s",
+	log.Printf("[INFO] [Unsubscribe] Unsubscribing %d topics: %v, ClientID=%s",
 		len(topics), topics, c.config.ClientID)
 
 	unsubscribePacket := &paho.Unsubscribe{
@@ -315,7 +315,7 @@ func (c *Client) Unsubscribe(topics ...string) error {
 
 	_, err := c.manager.Unsubscribe(ctx, unsubscribePacket)
 	if err != nil {
-		log.Printf("[ERROR] [Unsubscribe] 取消订阅失败: %v", err)
+		log.Printf("[ERROR] [Unsubscribe] Unsubscribe failed: %v", err)
 		return fmt.Errorf("unsubscribe failed: %w", err)
 	}
 
@@ -324,7 +324,7 @@ func (c *Client) Unsubscribe(topics ...string) error {
 		delete(c.subscriptions, topic)
 	}
 
-	log.Printf("[INFO] [Unsubscribe] 取消订阅成功, ClientID=%s", c.config.ClientID)
+	log.Printf("[INFO] [Unsubscribe] Unsubscribe successful, ClientID=%s", c.config.ClientID)
 
 	return nil
 }
@@ -334,14 +334,14 @@ func (c *Client) Publish(topic string, qos byte, retained bool, payload interfac
 	c.mu.RLock()
 	if c.status != StatusConnected {
 		c.mu.RUnlock()
-		log.Printf("[ERROR] [Publish] MQTT 未连接, 无法发布消息到主题: %s", topic)
+		log.Printf("[ERROR] [Publish] MQTT not connected, cannot publish to topic: %s", topic)
 		return fmt.Errorf("not connected")
 	}
 	manager := c.manager
 	c.mu.RUnlock()
 
-	log.Printf("[DEBUG] [Publish] 正在发布消息, Topic=%s, QoS=%d, Retained=%v, Payload=%v",
-		topic, qos, retained, payload)
+	log.Printf("[DEBUG] [Publish] Publishing message, Topic=%s, QoS=%d, Retained=%v",
+		topic, qos, retained)
 
 	var payloadBytes []byte
 	switch v := payload.(type) {
@@ -365,11 +365,11 @@ func (c *Client) Publish(topic string, qos byte, retained bool, payload interfac
 
 	_, err := manager.Publish(ctx, publishPacket)
 	if err != nil {
-		log.Printf("[ERROR] [Publish] 发布失败, Topic=%s: %v", topic, err)
+		log.Printf("[ERROR] [Publish] Publish failed, Topic=%s: %v", topic, err)
 		return fmt.Errorf("publish failed: %w", err)
 	}
 
-	log.Printf("[DEBUG] [Publish] 发布成功, Topic=%s", topic)
+	log.Printf("[DEBUG] [Publish] Publish successful, Topic=%s", topic)
 
 	return nil
 }
@@ -390,18 +390,18 @@ func (c *Client) GetStatus() Status {
 
 // SetConnectionLostHandler 设置连接丢失回调
 func (c *Client) SetConnectionLostHandler(handler func(clientID string, err error)) {
-	log.Printf("[DEBUG] [SetConnectionLostHandler] 设置连接丢失回调, ClientID=%s", c.config.ClientID)
+	log.Printf("[DEBUG] [SetConnectionLostHandler] Setting connection lost handler, ClientID=%s", c.config.ClientID)
 	c.connectionLost = handler
 }
 
 // SetReconnectingHandler 设置重连回调
 func (c *Client) SetReconnectingHandler(handler func(clientID string)) {
-	log.Printf("[DEBUG] [SetReconnectingHandler] 设置重连回调, ClientID=%s", c.config.ClientID)
+	log.Printf("[DEBUG] [SetReconnectingHandler] Setting reconnecting handler, ClientID=%s", c.config.ClientID)
 	c.reconnecting = handler
 }
 
 // SetOnConnectHandler 设置连接成功回调
 func (c *Client) SetOnConnectHandler(handler func(clientID string)) {
-	log.Printf("[DEBUG] [SetOnConnectHandler] 设置连接成功回调, ClientID=%s", c.config.ClientID)
+	log.Printf("[DEBUG] [SetOnConnectHandler] Setting on connect handler, ClientID=%s", c.config.ClientID)
 	c.onConnect = handler
 }
