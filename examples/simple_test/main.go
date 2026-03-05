@@ -57,7 +57,7 @@ func main() {
 			ClientID:             *mqttClientID,
 			Username:             *mqttUsername,
 			Password:             *mqttPassword,
-			KeepAlive:            60 * time.Second,
+			KeepAlive:            60,
 			ConnectTimeout:       10 * time.Second,
 			CleanSession:         true,
 			AutoReconnect:        true,
