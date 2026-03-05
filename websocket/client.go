@@ -116,19 +116,20 @@ func (c *Client) Connect(ctx context.Context) error {
 // Disconnect 断开 WebSocket 连接
 func (c *Client) Disconnect() error {
 	c.mu.Lock()
-	if c.status == StatusDisconnected {
+	// 如果已经断开且清理完成，直接返回
+	if c.conn == nil {
 		c.mu.Unlock()
 		return nil
 	}
 	c.status = StatusDisconnected
+	conn := c.conn
+	c.conn = nil
 	c.mu.Unlock()
 
 	close(c.stopChan)
 
-	if c.conn != nil {
-		c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-		c.conn.Close()
-	}
+	conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+	conn.Close()
 
 	c.wg.Wait()
 	return nil
