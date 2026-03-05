@@ -12,19 +12,21 @@ import (
 	"github.com/jdhxyy/agent-connector/protocol"
 )
 
+// Client WebSocket 客户端
 type Client struct {
-	config     *Config
-	conn       *websocket.Conn
-	mu         sync.RWMutex
-	status     Status
-	msgChan    chan protocol.PicoMessage
-	errChan    chan error
-	stopChan   chan struct{}
-	wg         sync.WaitGroup
-	handlers   []protocol.MessageHandler
-	sessionID  string
+	config    *Config
+	conn      *websocket.Conn
+	mu        sync.RWMutex
+	status    Status
+	msgChan   chan protocol.PicoMessage
+	errChan   chan error
+	stopChan  chan struct{}
+	wg        sync.WaitGroup
+	handlers  []protocol.MessageHandler
+	sessionID string
 }
 
+// Config WebSocket 客户端配置
 type Config struct {
 	BaseURL           string
 	Token             string
@@ -35,6 +37,7 @@ type Config struct {
 	ReconnectDelay    time.Duration
 }
 
+// Status 连接状态枚举
 type Status int
 
 const (
@@ -44,6 +47,7 @@ const (
 	StatusReconnecting
 )
 
+// NewClient 创建新的 WebSocket 客户端
 func NewClient(config *Config) *Client {
 	sessionID := config.SessionID
 	if sessionID == "" {
@@ -51,15 +55,16 @@ func NewClient(config *Config) *Client {
 	}
 
 	return &Client{
-		config:   config,
-		status:   StatusDisconnected,
-		msgChan:  make(chan protocol.PicoMessage, 100),
-		errChan:  make(chan error, 10),
-		stopChan: make(chan struct{}),
+		config:    config,
+		status:    StatusDisconnected,
+		msgChan:   make(chan protocol.PicoMessage, 100),
+		errChan:   make(chan error, 10),
+		stopChan:  make(chan struct{}),
 		sessionID: sessionID,
 	}
 }
 
+// Connect 连接到 WebSocket 服务器
 func (c *Client) Connect(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -102,6 +107,7 @@ func (c *Client) Connect(ctx context.Context) error {
 	return nil
 }
 
+// Disconnect 断开 WebSocket 连接
 func (c *Client) Disconnect() error {
 	c.mu.Lock()
 	if c.status == StatusDisconnected {
@@ -122,11 +128,13 @@ func (c *Client) Disconnect() error {
 	return nil
 }
 
+// SendMessage 发送文本消息（便捷方法）
 func (c *Client) SendMessage(content string) error {
 	msg := protocol.NewTextMessage(content)
 	return c.SendPicoMessage(msg)
 }
 
+// SendPicoMessage 发送 PicoMessage
 func (c *Client) SendPicoMessage(msg protocol.PicoMessage) error {
 	c.mu.RLock()
 	if c.status != StatusConnected {
@@ -148,11 +156,13 @@ func (c *Client) SendPicoMessage(msg protocol.PicoMessage) error {
 	return nil
 }
 
+// SendPing 发送心跳 ping
 func (c *Client) SendPing() error {
 	msg := protocol.NewPing()
 	return c.SendPicoMessage(msg)
 }
 
+// ReceiveMessage 接收消息（阻塞方法）
 func (c *Client) ReceiveMessage(timeout time.Duration) (protocol.PicoMessage, error) {
 	select {
 	case msg := <-c.msgChan:
@@ -164,6 +174,7 @@ func (c *Client) ReceiveMessage(timeout time.Duration) (protocol.PicoMessage, er
 	}
 }
 
+// readLoop 消息读取循环
 func (c *Client) readLoop() {
 	defer c.wg.Done()
 
@@ -206,22 +217,26 @@ func (c *Client) readLoop() {
 	}
 }
 
+// GetSessionID 获取会话 ID
 func (c *Client) GetSessionID() string {
 	return c.sessionID
 }
 
+// IsConnected 检查是否已连接
 func (c *Client) IsConnected() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.status == StatusConnected
 }
 
+// GetStatus 获取连接状态
 func (c *Client) GetStatus() Status {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.status
 }
 
+// generateSessionID 生成唯一的会话 ID
 func generateSessionID() string {
 	return fmt.Sprintf("session-%d", time.Now().UnixNano())
 }

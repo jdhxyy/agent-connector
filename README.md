@@ -62,8 +62,8 @@ func main() {
         return nil
     })
 
-    // 发送消息
-    connector.SendToAgent("other-agent", msg)
+    // 发送消息给外部 MQTT Agent
+    connector.SendToExternalAgent("other-agent", msg)
 }
 ```
 

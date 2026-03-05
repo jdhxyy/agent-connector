@@ -4,199 +4,505 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/jdhxyy/agent-connector/protocol"
 )
 
 func TestNewRouter(t *testing.T) {
-	r := NewRouter()
-	assert.NotNil(t, r)
-	assert.Empty(t, r.ListRules())
+	router := NewRouter()
+	if router == nil {
+		t.Fatal("NewRouter() returned nil")
+	}
+
+	rules := router.ListRules()
+	if len(rules) != 0 {
+		t.Errorf("Initial rules count = %d, want 0", len(rules))
+	}
 }
 
 func TestRouter_RegisterRule(t *testing.T) {
-	r := NewRouter()
+	router := NewRouter()
 
 	rule := RouteRule{
 		Source:      "websocket",
-		SourceAgent: "agent-a",
-		TargetAgent: "agent-b",
+		SourceAgent: "agent-1",
+		TargetAgent: "agent-2",
 		MessageType: "text",
 	}
 
-	err := r.RegisterRule(rule)
-	assert.NoError(t, err)
-
-	rules := r.ListRules()
-	assert.Len(t, rules, 1)
-	assert.Equal(t, rule, rules[0])
-}
-
-func TestRouter_Route(t *testing.T) {
-	r := NewRouter()
-
-	var wsCalled, mqttCalled bool
-	r.SetWebSocketHandler(func(msg protocol.Message) error {
-		wsCalled = true
-		return nil
-	})
-	r.SetMQTTHandler(func(msg protocol.Message) error {
-		mqttCalled = true
-		return nil
-	})
-
-	r.RegisterRule(RouteRule{
-		Source:      "websocket",
-		SourceAgent: "agent-a",
-		TargetAgent: "agent-b",
-	})
-
-	msg := &protocol.GenericMessage{
-		Source:  "agent-a",
-		Target:  "agent-b",
-		MsgType: "text",
+	err := router.RegisterRule(rule)
+	if err != nil {
+		t.Errorf("RegisterRule() error = %v", err)
 	}
 
-	err := r.Route(msg)
-	assert.NoError(t, err)
-	assert.True(t, mqttCalled)
-	assert.False(t, wsCalled)
-}
-
-func TestRouter_Route_NoMatch(t *testing.T) {
-	r := NewRouter()
-
-	msg := &protocol.GenericMessage{
-		Source:  "agent-c",
-		Target:  "agent-d",
-		MsgType: "text",
+	rules := router.ListRules()
+	if len(rules) != 1 {
+		t.Errorf("Rules count = %d, want 1", len(rules))
 	}
 
-	err := r.Route(msg)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no matching route found")
+	if rules[0].Source != "websocket" {
+		t.Errorf("Rule.Source = %v, want websocket", rules[0].Source)
+	}
 }
 
-func TestRouter_Route_WithTransform(t *testing.T) {
-	r := NewRouter()
+func TestRouter_RegisterMultipleRules(t *testing.T) {
+	router := NewRouter()
 
-	var receivedMsg protocol.Message
-	r.SetMQTTHandler(func(msg protocol.Message) error {
-		receivedMsg = msg
-		return nil
-	})
-
-	r.RegisterRule(RouteRule{
-		Source:      "websocket",
-		SourceAgent: "agent-a",
-		Transform: func(msg protocol.Message) (protocol.Message, error) {
-			return &protocol.GenericMessage{
-				ID:      "transformed",
-				MsgType: msg.GetType(),
-				Source:  msg.GetSource(),
-				Target:  msg.GetTarget(),
-			}, nil
+	rules := []RouteRule{
+		{
+			Source:      "websocket",
+			SourceAgent: "agent-1",
+			TargetAgent: "agent-2",
+			MessageType: "text",
 		},
-	})
-
-	msg := &protocol.GenericMessage{
-		ID:      "original",
-		Source:  "agent-a",
-		Target:  "agent-b",
-		MsgType: "text",
-	}
-
-	err := r.Route(msg)
-	assert.NoError(t, err)
-	assert.Equal(t, "transformed", receivedMsg.GetID())
-}
-
-func TestRouter_Route_TransformError(t *testing.T) {
-	r := NewRouter()
-
-	r.RegisterRule(RouteRule{
-		Source:      "websocket",
-		SourceAgent: "agent-a",
-		Transform: func(msg protocol.Message) (protocol.Message, error) {
-			return nil, errors.New("transform error")
+		{
+			Source:      "mqtt",
+			SourceAgent: "agent-2",
+			TargetAgent: "agent-1",
+			MessageType: "command",
 		},
-	})
-
-	msg := &protocol.GenericMessage{
-		Source:  "agent-a",
-		Target:  "agent-b",
-		MsgType: "text",
+		{
+			Source:      "websocket",
+			SourceAgent: "*",
+			TargetAgent: "broadcast",
+			MessageType: "status",
+		},
 	}
 
-	err := r.Route(msg)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "transform message")
-}
+	for _, rule := range rules {
+		err := router.RegisterRule(rule)
+		if err != nil {
+			t.Errorf("RegisterRule() error = %v", err)
+		}
+	}
 
-func TestRouter_GetTargetTopic(t *testing.T) {
-	r := NewRouter()
-
-	topic := r.GetTargetTopic("agent-a", "agent-b", "text")
-	assert.Equal(t, "agent/chat/agent-b/text", topic)
+	registeredRules := router.ListRules()
+	if len(registeredRules) != 3 {
+		t.Errorf("Rules count = %d, want 3", len(registeredRules))
+	}
 }
 
 func TestRouter_ClearRules(t *testing.T) {
-	r := NewRouter()
+	router := NewRouter()
 
-	r.RegisterRule(RouteRule{Source: "websocket"})
-	r.RegisterRule(RouteRule{Source: "mqtt"})
+	// 添加一些规则
+	router.RegisterRule(RouteRule{
+		Source:      "websocket",
+		SourceAgent: "agent-1",
+		TargetAgent: "agent-2",
+	})
 
-	assert.Len(t, r.ListRules(), 2)
+	router.RegisterRule(RouteRule{
+		Source:      "mqtt",
+		SourceAgent: "agent-2",
+		TargetAgent: "agent-1",
+	})
 
-	r.ClearRules()
-	assert.Empty(t, r.ListRules())
+	// 清除规则
+	router.ClearRules()
+
+	rules := router.ListRules()
+	if len(rules) != 0 {
+		t.Errorf("Rules count after clear = %d, want 0", len(rules))
+	}
 }
 
-func TestRouter_MatchesRule(t *testing.T) {
-	r := NewRouter()
-
+func TestRouter_Route(t *testing.T) {
 	tests := []struct {
-		name     string
-		rule     RouteRule
-		msg      protocol.Message
-		expected bool
+		name      string
+		setup     func(*Router)
+		msg       *protocol.GenericMessage
+		wantErr   bool
+		errMsg    string
+		handledBy string
 	}{
 		{
-			name:     "match all",
-			rule:     RouteRule{},
-			msg:      &protocol.GenericMessage{Source: "a", Target: "b", MsgType: "text"},
-			expected: true,
+			name: "matching websocket rule",
+			setup: func(r *Router) {
+				r.SetWebSocketHandler(func(msg protocol.Message) error {
+					return nil
+				})
+				r.RegisterRule(RouteRule{
+					Source:      "websocket",
+					SourceAgent: "agent-1",
+					TargetAgent: "agent-2",
+					MessageType: "text",
+				})
+			},
+			msg: &protocol.GenericMessage{
+				MsgType: "text",
+				Source:  "agent-1",
+				Target:  "agent-2",
+			},
+			wantErr: false,
 		},
 		{
-			name:     "match source agent",
-			rule:     RouteRule{SourceAgent: "agent-a"},
-			msg:      &protocol.GenericMessage{Source: "agent-a"},
-			expected: true,
+			name: "matching mqtt rule",
+			setup: func(r *Router) {
+				r.SetMQTTHandler(func(msg protocol.Message) error {
+					return nil
+				})
+				r.RegisterRule(RouteRule{
+					Source:      "mqtt",
+					SourceAgent: "agent-2",
+					TargetAgent: "agent-1",
+					MessageType: "command",
+				})
+			},
+			msg: &protocol.GenericMessage{
+				MsgType: "command",
+				Source:  "agent-2",
+				Target:  "agent-1",
+			},
+			wantErr: false,
 		},
 		{
-			name:     "no match source agent",
-			rule:     RouteRule{SourceAgent: "agent-a"},
-			msg:      &protocol.GenericMessage{Source: "agent-b"},
-			expected: false,
+			name: "no matching rule",
+			setup: func(r *Router) {
+				r.RegisterRule(RouteRule{
+					Source:      "websocket",
+					SourceAgent: "agent-1",
+					TargetAgent: "agent-2",
+					MessageType: "text",
+				})
+			},
+			msg: &protocol.GenericMessage{
+				MsgType: "image",
+				Source:  "agent-1",
+				Target:  "agent-2",
+			},
+			wantErr: true,
+			errMsg:  "no matching route found",
 		},
 		{
-			name:     "match message type",
-			rule:     RouteRule{MessageType: "text"},
-			msg:      &protocol.GenericMessage{MsgType: "text"},
-			expected: true,
+			name: "wildcard source agent",
+			setup: func(r *Router) {
+				r.SetWebSocketHandler(func(msg protocol.Message) error {
+					return nil
+				})
+				r.RegisterRule(RouteRule{
+					Source:      "websocket",
+					SourceAgent: "",
+					TargetAgent: "broadcast",
+					MessageType: "status",
+				})
+			},
+			msg: &protocol.GenericMessage{
+				MsgType: "status",
+				Source:  "any-agent",
+				Target:  "broadcast",
+			},
+			wantErr: false,
 		},
 		{
-			name:     "no match message type",
-			rule:     RouteRule{MessageType: "text"},
-			msg:      &protocol.GenericMessage{MsgType: "command"},
-			expected: false,
+			name: "wildcard message type",
+			setup: func(r *Router) {
+				r.SetMQTTHandler(func(msg protocol.Message) error {
+					return nil
+				})
+				r.RegisterRule(RouteRule{
+					Source:      "mqtt",
+					SourceAgent: "agent-1",
+					TargetAgent: "agent-2",
+					MessageType: "",
+				})
+			},
+			msg: &protocol.GenericMessage{
+				MsgType: "anything",
+				Source:  "agent-1",
+				Target:  "agent-2",
+			},
+			wantErr: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := r.matchesRule(tt.msg, tt.rule)
-			assert.Equal(t, tt.expected, result)
+			router := NewRouter()
+			tt.setup(router)
+
+			err := router.Route(tt.msg)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("Route() error = nil, wantErr %v", tt.wantErr)
+					return
+				}
+				if tt.errMsg != "" && err.Error() != tt.errMsg {
+					t.Errorf("Route() error = %v, want %v", err.Error(), tt.errMsg)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Route() error = %v", err)
+				}
+			}
 		})
+	}
+}
+
+func TestRouter_Route_WithTransform(t *testing.T) {
+	router := NewRouter()
+
+	transformCalled := false
+	router.SetWebSocketHandler(func(msg protocol.Message) error {
+		return nil
+	})
+
+	router.RegisterRule(RouteRule{
+		Source:      "websocket",
+		SourceAgent: "agent-1",
+		TargetAgent: "agent-2",
+		MessageType: "text",
+		Transform: func(msg protocol.Message) (protocol.Message, error) {
+			transformCalled = true
+			// 修改消息内容
+			generic := msg.(*protocol.GenericMessage)
+			generic.Metadata["transformed"] = "true"
+			return generic, nil
+		},
+	})
+
+	msg := &protocol.GenericMessage{
+		MsgType:  "text",
+		Source:   "agent-1",
+		Target:   "agent-2",
+		Metadata: make(map[string]string),
+	}
+
+	err := router.Route(msg)
+	if err != nil {
+		t.Errorf("Route() error = %v", err)
+	}
+
+	if !transformCalled {
+		t.Error("Transform function was not called")
+	}
+
+	if msg.Metadata["transformed"] != "true" {
+		t.Error("Message was not transformed")
+	}
+}
+
+func TestRouter_Route_TransformError(t *testing.T) {
+	router := NewRouter()
+
+	router.SetWebSocketHandler(func(msg protocol.Message) error {
+		return nil
+	})
+
+	transformErr := errors.New("transform error")
+	router.RegisterRule(RouteRule{
+		Source:      "websocket",
+		SourceAgent: "agent-1",
+		TargetAgent: "agent-2",
+		MessageType: "text",
+		Transform: func(msg protocol.Message) (protocol.Message, error) {
+			return nil, transformErr
+		},
+	})
+
+	msg := &protocol.GenericMessage{
+		MsgType: "text",
+		Source:  "agent-1",
+		Target:  "agent-2",
+	}
+
+	err := router.Route(msg)
+	if err == nil {
+		t.Error("Route() should return error when transform fails")
+	}
+
+	if err.Error() != "transform message: transform error" {
+		t.Errorf("Route() error = %v, want transform error", err)
+	}
+}
+
+func TestRouter_Route_NoHandler(t *testing.T) {
+	router := NewRouter()
+
+	// 注册规则但不设置处理器
+	router.RegisterRule(RouteRule{
+		Source:      "websocket",
+		SourceAgent: "agent-1",
+		TargetAgent: "agent-2",
+		MessageType: "text",
+	})
+
+	msg := &protocol.GenericMessage{
+		MsgType: "text",
+		Source:  "agent-1",
+		Target:  "agent-2",
+	}
+
+	// 没有设置处理器，应该不会出错（只是不会路由）
+	err := router.Route(msg)
+	// 由于没有匹配的处理器，会返回 "no matching route found"
+	if err == nil {
+		t.Error("Route() should return error when no handler is set")
+	}
+}
+
+func TestRouter_GetTargetTopic(t *testing.T) {
+	router := NewRouter()
+
+	topic := router.GetTargetTopic("agent-1", "agent-2", "text")
+	expected := "agent/chat/agent-2/text"
+
+	if topic != expected {
+		t.Errorf("GetTargetTopic() = %v, want %v", topic, expected)
+	}
+}
+
+func TestRouter_ListRules_Concurrency(t *testing.T) {
+	router := NewRouter()
+
+	// 添加多个规则
+	for i := 0; i < 100; i++ {
+		router.RegisterRule(RouteRule{
+			Source:      "websocket",
+			SourceAgent: "agent-1",
+			TargetAgent: "agent-2",
+			MessageType: "text",
+		})
+	}
+
+	rules := router.ListRules()
+	if len(rules) != 100 {
+		t.Errorf("Rules count = %d, want 100", len(rules))
+	}
+
+	// 验证返回的副本是独立的
+	rules[0].Source = "modified"
+
+	rules2 := router.ListRules()
+	if rules2[0].Source != "websocket" {
+		t.Error("ListRules() should return a copy of rules")
+	}
+}
+
+func TestRouter_ConcurrentAccess(t *testing.T) {
+	router := NewRouter()
+
+	// 并发注册规则
+	done := make(chan bool, 10)
+	for i := 0; i < 10; i++ {
+		go func() {
+			for j := 0; j < 10; j++ {
+				router.RegisterRule(RouteRule{
+					Source:      "websocket",
+					SourceAgent: "agent-1",
+					TargetAgent: "agent-2",
+					MessageType: "text",
+				})
+			}
+			done <- true
+		}()
+	}
+
+	// 等待所有 goroutine 完成
+	for i := 0; i < 10; i++ {
+		<-done
+	}
+
+	rules := router.ListRules()
+	if len(rules) != 100 {
+		t.Errorf("Rules count = %d, want 100", len(rules))
+	}
+}
+
+func TestRouter_SetHandlers(t *testing.T) {
+	router := NewRouter()
+
+	wsHandlerCalled := false
+	router.SetWebSocketHandler(func(msg protocol.Message) error {
+		wsHandlerCalled = true
+		return nil
+	})
+
+	mqttHandlerCalled := false
+	router.SetMQTTHandler(func(msg protocol.Message) error {
+		mqttHandlerCalled = true
+		return nil
+	})
+
+	// 注册规则
+	router.RegisterRule(RouteRule{
+		Source:      "websocket",
+		SourceAgent: "agent-1",
+		TargetAgent: "agent-2",
+		MessageType: "text",
+	})
+
+	router.RegisterRule(RouteRule{
+		Source:      "mqtt",
+		SourceAgent: "agent-2",
+		TargetAgent: "agent-1",
+		MessageType: "command",
+	})
+
+	// 测试 WebSocket 路由
+	wsMsg := &protocol.GenericMessage{
+		MsgType: "text",
+		Source:  "agent-1",
+		Target:  "agent-2",
+	}
+	router.Route(wsMsg)
+
+	if !wsHandlerCalled {
+		t.Error("WebSocket handler was not called")
+	}
+
+	// 测试 MQTT 路由
+	mqttMsg := &protocol.GenericMessage{
+		MsgType: "command",
+		Source:  "agent-2",
+		Target:  "agent-1",
+	}
+	router.Route(mqttMsg)
+
+	if !mqttHandlerCalled {
+		t.Error("MQTT handler was not called")
+	}
+}
+
+// 基准测试
+func BenchmarkRouter_RegisterRule(b *testing.B) {
+	router := NewRouter()
+	rule := RouteRule{
+		Source:      "websocket",
+		SourceAgent: "agent-1",
+		TargetAgent: "agent-2",
+		MessageType: "text",
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		router.RegisterRule(rule)
+	}
+}
+
+func BenchmarkRouter_Route(b *testing.B) {
+	router := NewRouter()
+	router.SetWebSocketHandler(func(msg protocol.Message) error {
+		return nil
+	})
+
+	// 添加一些规则
+	for i := 0; i < 10; i++ {
+		router.RegisterRule(RouteRule{
+			Source:      "websocket",
+			SourceAgent: "agent-1",
+			TargetAgent: "agent-2",
+			MessageType: "text",
+		})
+	}
+
+	msg := &protocol.GenericMessage{
+		MsgType: "text",
+		Source:  "agent-1",
+		Target:  "agent-2",
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		router.Route(msg)
 	}
 }

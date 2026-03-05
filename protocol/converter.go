@@ -6,12 +6,16 @@ import (
 	"time"
 )
 
+// Converter 消息协议转换器
+// 负责在不同消息格式之间进行转换
 type Converter struct{}
 
+// NewConverter 创建新的转换器实例
 func NewConverter() *Converter {
 	return &Converter{}
 }
 
+// PicoToGeneric 将 PicoMessage 转换为 GenericMessage
 func (c *Converter) PicoToGeneric(pico PicoMessage, source string) (*GenericMessage, error) {
 	payload, err := json.Marshal(pico.Payload)
 	if err != nil {
@@ -30,6 +34,7 @@ func (c *Converter) PicoToGeneric(pico PicoMessage, source string) (*GenericMess
 	}, nil
 }
 
+// GenericToPico 将 GenericMessage 转换为 PicoMessage
 func (c *Converter) GenericToPico(msg *GenericMessage) (PicoMessage, error) {
 	var payload map[string]any
 	if len(msg.Payload) > 0 {
@@ -38,44 +43,76 @@ func (c *Converter) GenericToPico(msg *GenericMessage) (PicoMessage, error) {
 		}
 	}
 
+	sessionID := msg.Metadata["session_id"]
+
 	return PicoMessage{
 		Type:      msg.MsgType,
 		ID:        msg.ID,
+		SessionID: sessionID,
 		Timestamp: msg.Timestamp.UnixMilli(),
 		Payload:   payload,
 	}, nil
 }
 
-func (c *Converter) MQTTToGeneric(topic string, payload []byte) (*GenericMessage, error) {
-	var msg GenericMessage
-	if err := json.Unmarshal(payload, &msg); err != nil {
-		msg = GenericMessage{
-			ID:        generateID(),
-			MsgType:   "raw",
-			Payload:   payload,
-			Timestamp: time.Now(),
-			Metadata: map[string]string{
-				"topic": topic,
-			},
-		}
+// MQTTToPico 将 MQTT 消息（纯文本）转换为 PicoMessage
+func (c *Converter) MQTTToPico(topic string, data []byte) (PicoMessage, error) {
+	sessionID := TopicToSessionID(topic)
+	if sessionID == "" {
+		return PicoMessage{}, fmt.Errorf("invalid topic: %s", topic)
 	}
-	return &msg, nil
+
+	return PicoMessage{
+		Type:      TypeMessageSend,
+		Timestamp: time.Now().UnixMilli(),
+		SessionID: sessionID,
+		Payload: map[string]any{
+			"content": string(data),
+		},
+	}, nil
 }
 
-func (c *Converter) GenericToMQTT(msg *GenericMessage) (string, []byte, error) {
-	payload, err := json.Marshal(msg)
-	if err != nil {
-		return "", nil, fmt.Errorf("marshal message: %w", err)
+// PicoToMQTT 将 PicoMessage 转换为 MQTT 消息（纯文本）
+// 主题生成规则：
+//   - agent:{id} -> agent/{id}/message
+//   - group:{id} -> group/{id}/message
+//   - broadcast:all -> broadcast/message
+func (c *Converter) PicoToMQTT(pico PicoMessage) (string, []byte, error) {
+	targetType, targetID := ParseSessionID(pico.SessionID)
+	if targetID == "" {
+		return "", nil, fmt.Errorf("invalid session_id: %s", pico.SessionID)
 	}
 
-	topic := msg.Metadata["topic"]
-	if topic == "" {
-		topic = fmt.Sprintf("agent/chat/%s/%s", msg.Target, msg.MsgType)
+	var topic string
+	switch targetType {
+	case "agent":
+		topic = fmt.Sprintf("agent/%s/message", targetID)
+	case "group":
+		topic = fmt.Sprintf("group/%s/message", targetID)
+	case "broadcast":
+		topic = "broadcast/message"
+	default:
+		return "", nil, fmt.Errorf("unknown target type: %s", targetType)
 	}
 
-	return topic, payload, nil
+	content, ok := pico.Payload["content"].(string)
+	if !ok {
+		return "", nil, fmt.Errorf("invalid payload content")
+	}
+
+	return topic, []byte(content), nil
 }
 
-func generateID() string {
-	return fmt.Sprintf("msg-%d", time.Now().UnixNano())
+// BuildAgentTopic 构建外部 Agent 的 MQTT Topic
+func BuildAgentTopic(agentID string) string {
+	return fmt.Sprintf("agent/%s/message", agentID)
+}
+
+// BuildGroupTopic 构建外部群组的 MQTT Topic
+func BuildGroupTopic(groupID string) string {
+	return fmt.Sprintf("group/%s/message", groupID)
+}
+
+// BuildBroadcastTopic 构建广播 MQTT Topic
+func BuildBroadcastTopic() string {
+	return "broadcast/message"
 }

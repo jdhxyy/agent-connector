@@ -55,12 +55,12 @@ func (r *Router) Route(msg protocol.Message) error {
 
 			switch rule.Source {
 			case "websocket":
-				if r.mqttHandler != nil {
-					return r.mqttHandler(transformedMsg)
-				}
-			case "mqtt":
 				if r.wsHandler != nil {
 					return r.wsHandler(transformedMsg)
+				}
+			case "mqtt":
+				if r.mqttHandler != nil {
+					return r.mqttHandler(transformedMsg)
 				}
 			}
 		}
