@@ -317,9 +317,9 @@ func (c *connector) messageLoop() {
 
 			log.Printf("[DEBUG] [messageLoop] 收到 WebSocket 消息, Type=%s, SessionID=%s", picoMsg.Type, picoMsg.SessionID)
 
-			// 过滤掉 pong 消息（心跳响应），不转发到 MQTT
-			if picoMsg.Type == protocol.TypePong {
-				log.Printf("[DEBUG] [messageLoop] 收到 pong 消息，不转发到 MQTT")
+			// 只转发 message.send 类型的消息到 MQTT，过滤其他所有类型
+			if picoMsg.Type != protocol.TypeMessageSend && picoMsg.Type != protocol.TypeMessageCreate {
+				log.Printf("[DEBUG] [messageLoop] 收到非 message.send 消息(Type=%s)，不转发到 MQTT", picoMsg.Type)
 				continue
 			}
 
