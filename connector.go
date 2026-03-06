@@ -317,7 +317,6 @@ func (c *connector) messageLoop() {
 
 			// 只转发 message.send 类型的消息到 MQTT，过滤其他所有类型
 			if picoMsg.Type != protocol.TypeMessageSend && picoMsg.Type != protocol.TypeMessageCreate {
-				log.Printf("[DEBUG] [messageLoop] Received non-message.send message (Type=%s), not forwarding to MQTT", picoMsg.Type)
 				continue
 			}
 
