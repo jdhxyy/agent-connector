@@ -301,7 +301,6 @@ func (c *connector) messageLoop() {
 			return
 
 		case <-ticker.C:
-			log.Printf("[DEBUG] [messageLoop] Sending WebSocket ping")
 			if err := c.wsClient.SendPing(); err != nil {
 				log.Printf("[ERROR] [messageLoop] Ping failed: %v", err)
 				c.notifyError(err, ErrorContext{
@@ -316,13 +315,13 @@ func (c *connector) messageLoop() {
 				continue
 			}
 
-			log.Printf("[DEBUG] [messageLoop] Received WebSocket message, Type=%s, SessionID=%s", picoMsg.Type, picoMsg.SessionID)
-
 			// 只转发 message.send 类型的消息到 MQTT，过滤其他所有类型
 			if picoMsg.Type != protocol.TypeMessageSend && picoMsg.Type != protocol.TypeMessageCreate {
 				log.Printf("[DEBUG] [messageLoop] Received non-message.send message (Type=%s), not forwarding to MQTT", picoMsg.Type)
 				continue
 			}
+
+			log.Printf("[DEBUG] [messageLoop] Received WebSocket message, Type=%s, SessionID=%s", picoMsg.Type, picoMsg.SessionID)
 
 			if err := c.forwardWebSocketToMQTT(picoMsg); err != nil {
 				log.Printf("[ERROR] [messageLoop] Failed to forward to MQTT: %v", err)
@@ -360,10 +359,15 @@ func (c *connector) updateStatus(fn func(*ConnectorStatus)) {
 	newStatus := c.status
 	c.statusMu.Unlock()
 
-	log.Printf("[DEBUG] [updateStatus] Status changed: WS=%s->%s, MQTT=%s->%s, Running=%v->%v",
-		oldStatus.WebSocketStatus, newStatus.WebSocketStatus,
-		oldStatus.MQTTStatus, newStatus.MQTTStatus,
-		oldStatus.IsRunning, newStatus.IsRunning)
+	// 只有状态真正有变化时才打印日志
+	if oldStatus.WebSocketStatus != newStatus.WebSocketStatus ||
+		oldStatus.MQTTStatus != newStatus.MQTTStatus ||
+		oldStatus.IsRunning != newStatus.IsRunning {
+		log.Printf("[DEBUG] [updateStatus] Status changed: WS=%s->%s, MQTT=%s->%s, Running=%v->%v",
+			oldStatus.WebSocketStatus, newStatus.WebSocketStatus,
+			oldStatus.MQTTStatus, newStatus.MQTTStatus,
+			oldStatus.IsRunning, newStatus.IsRunning)
+	}
 
 	for _, handler := range c.statusHandlers {
 		handler(oldStatus.WebSocketStatus, newStatus.WebSocketStatus)
